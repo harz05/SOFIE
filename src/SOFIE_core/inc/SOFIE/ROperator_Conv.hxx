@@ -558,7 +558,7 @@ public:
       out << "    const int ic = tmp;\n";
       out << "    const int ih = oh * strideH - padH + kh * dilH;\n";
       out << "    const int iw = ow * strideW - padW + kw * dilW;\n";
-      out << "    const int col_idx = ((ic * kH + kh) * kW + kw) * (oH * oW) + oh * oW + ow;\n";
+      out << "    const int col_idx = (oh * oW + ow) * (iC * kH * kW) + (ic * kH + kh) * kW + kw;\n";
       out << "    col[col_idx] = (ih >= 0 && ih < iH && iw >= 0 && iw < iW)\n";
       out << "                   ? input[ic * iH * iW + ih * iW + iw] : 0.0f;\n";
       out << "  }\n";
@@ -648,10 +648,10 @@ public:
       out << SP << "}\n";
 
       // ---- GEMM: W(oC x iC*kH*kW) * xcol(iC*kH*kW x oH*oW) = Y(oC x oH*oW) ----
-      // sofieBLAS signature: blas.gemm(transB, transA, n, m, k, alpha, B, A, beta, C, Y)
-      // Here: A=W (oC x k), B=xcol (k x oH*oW), so m=oC, n=oH*oW, k=iC*kH*kW
+      // sofieBLAS stores A as (k x m) col-major. Im2col outputs (oH*oW, k) row-major
+      // whose col-major view is (k, oH*oW) = (k, m). Use transA='t' so op(A)=A^T=(m,k).
       out << SP << "char " << opName << "_tA = 'n';\n";
-      out << SP << "char " << opName << "_tB = 'n';\n";
+      out << SP << "char " << opName << "_tB = 't';\n";
       out << SP << "int  " << opName << "_m = " << oC          << ";\n";
       out << SP << "int  " << opName << "_n = " << oH * oW     << ";\n";
       out << SP << "int  " << opName << "_k = " << iC*kH*kW    << ";\n";
