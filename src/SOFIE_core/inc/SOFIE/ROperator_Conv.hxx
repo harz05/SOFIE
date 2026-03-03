@@ -650,6 +650,9 @@ public:
       // ---- GEMM: W(oC x iC*kH*kW) * xcol(iC*kH*kW x oH*oW) = Y(oC x oH*oW) ----
       // sofieBLAS stores A as (k x m) col-major. Im2col outputs (oH*oW, k) row-major
       // whose col-major view is (k, oH*oW) = (k, m). Use transA='t' so op(A)=A^T=(m,k).
+      // Zero Y first: sofieBLAS epilogue always adds bias pointer (Y) to GEMM result.
+      out << SP << "alpaka::memset(queue, deviceBuf_" << fNY << ", 0);\n";
+      out << SP << "alpaka::wait(queue);\n";
       out << SP << "char " << opName << "_tA = 'n';\n";
       out << SP << "char " << opName << "_tB = 't';\n";
       out << SP << "int  " << opName << "_m = " << oC          << ";\n";
