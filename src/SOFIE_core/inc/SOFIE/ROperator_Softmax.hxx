@@ -254,4 +254,6 @@ public:
 
 };
 
+} // namespace SOFIE
+
 #endif // SOFIE_ROPERATOR_Softmax
