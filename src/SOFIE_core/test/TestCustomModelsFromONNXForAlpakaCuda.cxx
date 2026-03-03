@@ -1,3 +1,5 @@
+//test functions from line 255
+//newly added-
 #include "Tanh_FromONNX_GPU_ALPAKA.hxx"
 #include "input_models/references/Tanh.ref.hxx"
 #include "Elu_FromONNX_GPU_ALPAKA.hxx"
@@ -250,6 +252,10 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
    }
    
 }
+
+
+//new added code starts from here for Tanh, Elu, Softmax1d-
+
 
 TEST_F(SofieAlpakaTest, Tanh)
 {
