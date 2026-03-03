@@ -303,8 +303,9 @@ void RModel::GenerateSessionCode_GPU_ALPAKA() {
 
       for (size_t id = 0; id < fOperators.size(); id++) {
          fGC += fOperators[id]->GenerateInitCode_GPU_ALPAKA();
-         if (fOperators[id]->GetKind() == OperatorKind::GEMM){
-            fGC += "\nblas.AddLayoutConfig("+fOperators[id]->GetBlasConfig()+");\n";
+         std::string blasCfg = fOperators[id]->GetBlasConfig();
+         if (!blasCfg.empty()){
+            fGC += "\nblas.AddLayoutConfig("+blasCfg+");\n";
          }
       }
 
