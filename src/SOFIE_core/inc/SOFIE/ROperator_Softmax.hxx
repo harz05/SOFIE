@@ -182,8 +182,76 @@ public:
       }
       return out.str();
    }
-};
+   std::string Generate_GPU_Kernel_ALPAKA(std::string /*opName*/) override {
+      std::string op;
+      op =  "\n//------ SOFTMAX_KERNEL_ALPAKA\n";
+      op += "// One thread per row: each thread computes softmax over rowSize elements.\n";
+      op += "// Numerically stable: subtracts row max before exponentiation.\n";
+      op += "struct SoftmaxKernel {\n";
+      op += SP + "template<typename TAcc, typename T>\n";
+      op += SP + "ALPAKA_FN_ACC void operator()(TAcc const & acc, T const* __restrict__ data, T* __restrict__ out,\n";
+      op += SP + SP + "                           std::size_t numRows, std::size_t rowSize) const {\n";
+      op += SP + SP + "const auto row = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      op += SP + SP + "if (row < numRows) {\n";
+      op += SP + SP + SP + "const T* rowData = data + row * rowSize;\n";
+      op += SP + SP + SP + "T* rowOut = out + row * rowSize;\n";
+      op += SP + SP + SP + "// Find max for numerical stability\n";
+      op += SP + SP + SP + "T vmax = rowData[0];\n";
+      op += SP + SP + SP + "for (std::size_t i = 1; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "if (rowData[i] > vmax) vmax = rowData[i];\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + SP + "// Compute exp(x - max) and accumulate sum\n";
+      op += SP + SP + SP + "T sum = static_cast<T>(0);\n";
+      op += SP + SP + SP + "for (std::size_t i = 0; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "rowOut[i] = exp(rowData[i] - vmax);\n";
+      op += SP + SP + SP + SP + "sum += rowOut[i];\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + SP + "// Normalize\n";
+      op += SP + SP + SP + "for (std::size_t i = 0; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "rowOut[i] /= sum;\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + "}\n";
+      op += SP + "}\n";
+      op += "};\n";
+      return op;
+   }
 
-} // namespace SOFIE
+   std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string /*opName*/) override {
+      return SP + "SoftmaxKernel softmaxKernel;\n";
+   }
+
+   std::string Generate_GPU_ALPAKA(std::string OpName) override {
+      OpName = "op_" + OpName;
+      if (fShape.empty()) {
+         throw std::runtime_error("TMVA SOFIE Softmax operator called to Generate_GPU_ALPAKA without being initialized first");
+      }
+      std::stringstream out;
+      size_t size   = fShape.size();
+      size_t length = ConvertShapeToLength(fShape);
+      size_t axis   = (fAttrAxis < 0) ? size + fAttrAxis : (size_t)fAttrAxis;
+
+      // Decompose shape into (numRows, rowSize) along the softmax axis.
+      // rowSize  = size of the axis dimension
+      // numRows  = total elements / rowSize
+      size_t rowSize = fShape[axis];
+      size_t numRows = length / rowSize;
+
+      out << "\n//------ SOFTMAX_GPU_ALPAKA  axis=" << axis << "  numRows=" << numRows << "  rowSize=" << rowSize << "\n";
+      out << SP << "auto const elementsPerThread_" << fNX << " = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << "auto const elementsPerGrid_"   << fNX << " = Vec::all(Idx{" << numRows << "});\n";
+      out << SP << "alpaka::KernelCfg<Acc> const kernelCfg_" << fNX
+          << " = {elementsPerGrid_" << fNX << ", elementsPerThread_" << fNX << "};\n";
+      out << SP << "auto const workDiv_" << fNX << " = alpaka::getValidWorkDiv(kernelCfg_" << fNX
+          << ", devAcc, softmaxKernel, alpaka::getPtrNative(deviceBuf_" << fNX
+          << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << numRows << "), static_cast<Idx>(" << rowSize << "));\n";
+      out << SP << "alpaka::exec<Acc>(queue, workDiv_" << fNX << ", softmaxKernel, "
+          << "alpaka::getPtrNative(deviceBuf_" << fNX
+          << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << numRows << "), static_cast<Idx>(" << rowSize << "));\n";
+      return out.str();
+   }
+
+};
 
 #endif // SOFIE_ROPERATOR_Softmax
