@@ -598,6 +598,7 @@ public:
 
       std::stringstream out;
       out << "\n//----  Conv GPU ALPAKA " << opName << "\n";
+      out << SP << "sofieBLAS<tagAcc> blas{queue};\n";
 
       const size_t iC      = fShapeX[1];
       const size_t iH      = fShapeX[2];
@@ -617,7 +618,7 @@ public:
 
       // Allocate device buffer for im2col output: shape (iC*kH*kW, oH*oW)
       out << SP << "auto deviceBuf_" << opName << "_xcol = "
-          << "alpaka::allocBuf<float, Idx>(device, Ext1D::all(Idx{" << xcol_n << "}));\n";
+          << "alpaka::allocBuf<float, Idx>(devAcc, Ext1D::all(Idx{" << xcol_n << "}));\n";
 
       // ---- Im2col kernel launch ----
       out << SP << "{\n";
