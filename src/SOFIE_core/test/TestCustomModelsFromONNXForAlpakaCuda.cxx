@@ -249,21 +249,19 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE);
    }
    
-   //new testing code added below--
+}
 
-   TEST_F(SofieAlpakaTest, Tanh)
-   {
+TEST_F(SofieAlpakaTest, Tanh)
+{
    constexpr float TOLERANCE = DEFAULT_TOLERANCE;
    constexpr size_t INPUT_SIZE = 24;
 
-   // Same input as the CPU test in TestCustomModelsFromONNX.cxx
    std::vector<float> input({
       -0.3896f, -0.3521f,  0.0363f,  1.0962f,  0.5085f, -0.8523f, -0.6766f,  0.2421f,
        1.5971f,  1.3873f, -0.2112f, -0.6895f, -0.5069f, -2.1395f, -0.7087f,  1.1658f,
        1.3493f,  0.8132f,  1.7156f, -0.8637f, -0.1971f,  0.0411f, -0.5662f, -0.2516f
    });
 
-   // Copy input to device
    auto A = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{INPUT_SIZE}));
    float *A_ptr = reinterpret_cast<float*>(alpaka::getPtrNative(A));
    for (Idx i = 0; i < INPUT_SIZE; ++i) A_ptr[i] = input[i];
@@ -279,7 +277,6 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       auto result = session.infer(A_d);
       alpaka::wait(queue);
       cudaDeviceSynchronize();
-
       alpaka::memcpy(queue, result_h, result);
       alpaka::wait(queue);
    }
@@ -291,15 +288,14 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE)
          << "Mismatch at index " << i
          << ": got " << res_ptr[i] << ", expected " << correct[i];
-   	}
    }
+}
 
-   TEST_F(SofieAlpakaTest, Elu)
-   {
+TEST_F(SofieAlpakaTest, Elu)
+{
    constexpr float TOLERANCE = DEFAULT_TOLERANCE;
-   constexpr size_t INPUT_SIZE = 6; // shape [2,3]
+   constexpr size_t INPUT_SIZE = 6;
 
-   // Same input as the CPU test in TestCustomModelsFromONNX.cxx
    std::vector<float> input({ 1.0f, -2.0f, 3.0f, 0.5f, -1.0f, 2.0f });
 
    auto A = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{INPUT_SIZE}));
@@ -317,7 +313,6 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       auto result = session.infer(A_d);
       alpaka::wait(queue);
       cudaDeviceSynchronize();
-
       alpaka::memcpy(queue, result_h, result);
       alpaka::wait(queue);
    }
@@ -329,15 +324,14 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE)
          << "Mismatch at index " << i
          << ": got " << res_ptr[i] << ", expected " << correct[i];
-   	}
    }
+}
 
-   TEST_F(SofieAlpakaTest, Softmax1d)
-   {
+TEST_F(SofieAlpakaTest, Softmax1d)
+{
    constexpr float TOLERANCE = DEFAULT_TOLERANCE;
    constexpr size_t INPUT_SIZE = 3;
 
-   // Same input as the CPU test in TestCustomModelsFromONNX.cxx
    std::vector<float> input({ -1.0f, 0.0f, 1.0f });
 
    auto A = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{INPUT_SIZE}));
@@ -355,7 +349,6 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       auto result = session.infer(A_d);
       alpaka::wait(queue);
       cudaDeviceSynchronize();
-
       alpaka::memcpy(queue, result_h, result);
       alpaka::wait(queue);
    }
@@ -367,6 +360,5 @@ TEST_F(SofieAlpakaTest, LinearWithSigmoid)
       EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE)
          << "Mismatch at index " << i
          << ": got " << res_ptr[i] << ", expected " << correct[i];
-   	}
    }
 }
