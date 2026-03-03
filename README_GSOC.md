@@ -3,7 +3,7 @@
 This is a fork of the experimental SOFIE alpaka GPU inference repo:
 https://github.com/ML4EP/SOFIE/tree/gpu/alpaka
 
-This fork adds GPU implementations for the Tanh, Elu, Softmax, and Selu ONNX operators,
+This fork adds GPU implementations for the Tanh, Elu, Softmax, Selu, and Conv ONNX operators,
 along with unit tests verified on an NVIDIA T4 GPU.
 
 The operator implementations also live in the ROOT fork at:
@@ -22,9 +22,13 @@ run the GPU tests.
 - `ROperator_Elu.hxx` - same three methods, with alpha parameter support
 - `ROperator_Softmax.hxx` - same three methods, one thread per row, numerically stable
 - `ROperator_Selu.hxx` - same three methods, single shared kernel instance
+- `ROperator_Conv.hxx` - im2col kernel + sofieBLAS GEMM + bias kernel, with transposed im2col for cuBLASLt layout compatibility
+
+**Framework** (`src/SOFIE_core/src/`):
+- `RModel_ALPAKA.cxx` - generalized blas declaration and AddLayoutConfig from GEMM-only to any operator with GetBlasConfig()
 
 **Tests** (`src/SOFIE_core/test/`):
-- `TestCustomModelsFromONNXForAlpakaCuda.cxx` - added `SofieAlpakaTest.Tanh`, `SofieAlpakaTest.Elu`, `SofieAlpakaTest.Softmax1d`, `SofieAlpakaTest.LinearWithSelu`
+- `TestCustomModelsFromONNXForAlpakaCuda.cxx` - added `SofieAlpakaTest.Tanh`, `SofieAlpakaTest.Elu`, `SofieAlpakaTest.Softmax1d`, `SofieAlpakaTest.LinearWithSelu`, `SofieAlpakaTest.ConvWithPadding`
 
 **Colab notebook**:
 - `SOFIE_Alpaka_Test.ipynb` - runs the full build and test suite on a free T4 GPU
@@ -56,7 +60,7 @@ in Google Colab with a T4 runtime and run all cells.
 ## Test Results (NVIDIA T4, Google Colab)
 
 ```
-[==========] Running 9 tests from 1 test suite.
+[==========] Running 10 tests from 1 test suite.
 [       OK ] SofieAlpakaTest.Linear16 (507 ms)
 [       OK ] SofieAlpakaTest.Linear32 (45 ms)
 [       OK ] SofieAlpakaTest.Linear64 (10 ms)
@@ -66,5 +70,6 @@ in Google Colab with a T4 runtime and run all cells.
 [       OK ] SofieAlpakaTest.Elu (1 ms)
 [       OK ] SofieAlpakaTest.Softmax1d (1 ms)
 [       OK ] SofieAlpakaTest.LinearWithSelu (2 ms)
-[  PASSED  ] 9 tests.
+[       OK ] SofieAlpakaTest.ConvWithPadding (3 ms)
+[  PASSED  ] 10 tests.
 ```
