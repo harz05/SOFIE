@@ -32,6 +32,7 @@ run the GPU tests.
 
 **Colab notebook**:
 - `SOFIE_Alpaka_Test.ipynb` - runs the full build and test suite on a free T4 GPU
+- `SOFIE_Alpaka_Exercise5_Test.ipynb` - runs the full build and test suite for Conv(exercise 5) on a free T4 GPU
 
 ---
 
