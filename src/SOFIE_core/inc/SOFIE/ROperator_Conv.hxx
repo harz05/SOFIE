@@ -616,9 +616,6 @@ public:
       const size_t dilW    = fAttrDilations[1];
       const size_t xcol_n  = iC * kH * kW * oH * oW;
 
-      // AddLayoutConfig tells sofieBLAS the GEMM dimensions: (n, m, k)
-      out << SP << "blas.AddLayoutConfig(" << (oH*oW) << ", " << oC << ", " << (iC*kH*kW) << ");\n";
-
       // Allocate device buffer for im2col output: shape (iC*kH*kW, oH*oW)
       out << SP << "auto deviceBuf_" << opName << "_xcol = "
           << "alpaka::allocBuf<float, Idx>(devAcc, Ext1D::all(Idx{" << xcol_n << "}));\n";
@@ -694,6 +691,15 @@ public:
       }
 
       return out.str();
+   }
+
+   std::string GetBlasConfig() override {
+      if (fShapeX.empty() || fShapeW.empty() || fShapeY.empty()) return "";
+      if (fDim != 2) return "";
+      size_t oH = fShapeY[2], oW = fShapeY[3], oC = fShapeY[1];
+      size_t iC = fShapeX[1];
+      size_t kH = fAttrKernelShape[0], kW = fAttrKernelShape[1];
+      return std::to_string(oH*oW) + ", " + std::to_string(oC) + ", " + std::to_string(iC*kH*kW);
    }
 
    std::vector<std::string> GetBlasRoutines() override { return { std::string("Gemm"), std::string("Axpy") }; }
