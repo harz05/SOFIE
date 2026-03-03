@@ -62,6 +62,52 @@ public:
    }
 
    std::vector<std::string> GetStdLibs() override { return { std::string("cmath") };}
+
+   // --- Alpaka GPU implementation ---
+
+   std::string Generate_GPU_Kernel_ALPAKA(std::string opName) override {
+      std::stringstream out;
+      out << "struct SeluKernel_" << opName << " {\n";
+      out << "  template<typename TAcc, typename T>\n";
+      out << "  ALPAKA_FN_ACC void operator()(TAcc const & acc, T const* data, T* out, size_t n) const {\n";
+      out << "    const auto idx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      out << "    if (idx < n) {\n";
+      out << "      constexpr T alpha  = T(1.6732632423543772848170429916717);\n";
+      out << "      constexpr T lambda = T(1.0507009873554804934193349852946);\n";
+      out << "      T x = data[idx];\n";
+      out << "      out[idx] = lambda * (x > T(0) ? x : alpha * (exp(x) - T(1)));\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "};\n";
+      return out.str();
+   }
+
+   std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string opName) override {
+      std::stringstream out;
+      out << "SeluKernel_" << opName << " seluKernel_" << opName << ";\n";
+      return out.str();
+   }
+
+   std::string Generate_GPU_ALPAKA(std::string opName) override {
+      std::stringstream out;
+      size_t length = 1;
+      for (auto & i : fShape) length *= i;
+      out << SP << "auto const elementsPerThread_" << fNX << " = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << "auto const elementsPerGrid_"   << fNX << " = Vec::all(Idx{" << length << "});\n";
+      out << SP << "alpaka::KernelCfg<Acc> const kernelCfg_" << fNX
+          << " = {elementsPerGrid_" << fNX << ", elementsPerThread_" << fNX << "};\n";
+      out << SP << "auto const workDiv_" << fNX << " = alpaka::getValidWorkDiv(kernelCfg_" << fNX
+          << ", devAcc, seluKernel_" << opName
+          << ", alpaka::getPtrNative(deviceBuf_" << fNX << ")"
+          << ", alpaka::getPtrNative(deviceBuf_" << fNY << ")"
+          << ", static_cast<Idx>(" << length << "));\n";
+      out << SP << "alpaka::exec<Acc>(queue, workDiv_" << fNX << ", seluKernel_" << opName
+          << ", alpaka::getPtrNative(deviceBuf_" << fNX << ")"
+          << ", alpaka::getPtrNative(deviceBuf_" << fNY << ")"
+          << ", static_cast<Idx>(" << length << "));\n";
+      return out.str();
+   }
+
 };
 
 }//SOFIE
