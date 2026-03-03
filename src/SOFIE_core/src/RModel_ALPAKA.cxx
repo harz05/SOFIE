@@ -249,9 +249,15 @@ void RModel::GenerateSessionCode_GPU_ALPAKA() {
     fGC += "Idx threadsPerBlock = 256;\n";
     fGC += "\nusing Ext1D = alpaka::Vec<Dim, Idx>;\n";
     fGC += "using Vec = alpaka::Vec<Dim, Idx>;\n";
-    if (registered_operators.find(SOFIE::OperatorKind::GEMM) != registered_operators.end()) {
-         fGC += "\n\n// BLAS declarations\n";
-         fGC += "sofieBLAS<tagAcc> blas{queue};\n";
+    {
+         bool needsBlas = false;
+         for (auto &op : fOperators) {
+            if (!op->GetBlasConfig().empty()) { needsBlas = true; break; }
+         }
+         if (needsBlas) {
+            fGC += "\n\n// BLAS declarations\n";
+            fGC += "sofieBLAS<tagAcc> blas{queue};\n";
+         }
     }
 
    GenerateInitializedTensorInfo_GPU_ALPAKA();

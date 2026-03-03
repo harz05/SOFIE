@@ -598,7 +598,6 @@ public:
 
       std::stringstream out;
       out << "\n//----  Conv GPU ALPAKA " << opName << "\n";
-      out << SP << "sofieBLAS<tagAcc> blas{queue};\n";
 
       const size_t iC      = fShapeX[1];
       const size_t iH      = fShapeX[2];
