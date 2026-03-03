@@ -625,7 +625,7 @@ public:
       out << SP << SP << "auto const ept = Vec::all(static_cast<Idx>(1));\n";
       out << SP << SP << "auto const epg = Vec::all(Idx{" << xcol_n << "});\n";
       out << SP << SP << "alpaka::KernelCfg<Acc> const cfg = {epg, ept};\n";
-      out << SP << SP << "float* xptr = alpaka::getPtrNative(deviceBuf_" << fNX << ");\n";
+      out << SP << SP << "float const* xptr = alpaka::getPtrNative(deviceBuf_" << fNX << ");\n";
       out << SP << SP << "float* cptr = alpaka::getPtrNative(deviceBuf_" << opName << "_xcol);\n";
       out << SP << SP << "auto wdiv = alpaka::getValidWorkDiv(cfg, devAcc, im2colKernel,\n";
       out << SP << SP << SP << "xptr, cptr,\n";
