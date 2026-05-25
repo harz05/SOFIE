@@ -836,11 +836,11 @@ public:
       size_t gemm_n      = outChannels;                   // output channels
       size_t gemm_k      = fShapeW[1] * kernelSize;       // input channels/group * kernel volume
       size_t gemm_m      = oDepth * oHeight * oWidth;     // output spatial size per channel
+      if (fAttrGroup > 1) gemm_n /= fAttrGroup;           // per-group output channels for grouped conv
       size_t colElements = gemm_k * gemm_m;   // colRows * colCols
       size_t wTotal      = ConvertShapeToLength(fShapeW);
 
       // For group conv: per-group output channels and _f offset
-      // gemm_n stays as total output channels — we divide per group at launch
       size_t groupFOffset     = gemm_n * gemm_k;  // elements of _f per group
 
       std::stringstream out;
@@ -986,6 +986,7 @@ public:
       size_t gemm_n_  = fShapeW[0];
       size_t gemm_k_  = fShapeW[1] * kSize_;
       size_t gemm_m_  = oDepth_ * oHeight_ * oWidth_;
+      if (fAttrGroup > 1) gemm_n_ /= fAttrGroup;
       auto lda = std::to_string(gemm_m_);  // ld for xcol^T (gemm_m×gemm_k col-major)
       auto ldb = std::to_string(gemm_k_);  // ld for xf^T   (gemm_k×gemm_n col-major)
       auto ldc = std::to_string(gemm_m_);  // ld for y^T    (gemm_m×gemm_n col-major)
