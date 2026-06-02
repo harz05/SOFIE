@@ -70,7 +70,7 @@ public:
    virtual std::string Generate_GPU_ALPAKA(std::string OpName){ return "";} //expect unique opName for each operator within the same RModel
    // generate initialization code for session constructor
    virtual std::string GenerateInitCode() { return "";}
-   virtual std::string GenerateInitCode_GPU_ALPAKA() { return "";};
+   virtual std::string GenerateInitCode_GPU_ALPAKA(std::string /*opName*/) { return "";};
    // generate some specific declaration code for Session
    virtual std::string GenerateDeclCode() { return "";}
    // generate session data members specific to operator

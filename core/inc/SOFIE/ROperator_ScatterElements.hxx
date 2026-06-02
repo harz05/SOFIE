@@ -144,7 +144,7 @@ public:
    // inference the segmented-add kernel reads from these buffers, which are
    // read-only and never modified.
    // -----------------------------------------------------------------------
-   std::string GenerateInitCode_GPU_ALPAKA() override {
+   std::string GenerateInitCode_GPU_ALPAKA(std::string /*opName*/) override {
       if (!fUseSegmentedReduction) return "";   // only static-index models use segmented path
 
       std::string totalElements = ConvertDimShapeToLength(fShapeI);

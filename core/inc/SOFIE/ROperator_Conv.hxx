@@ -818,6 +818,28 @@ public:
       return op;
    }
 
+   // Weight vectorisation is invariant across infer calls (the weights are immutable after
+   // session init), so emit the launch once in the session constructor rather than every infer
+   std::string GenerateInitCode_GPU_ALPAKA(std::string opName) override {
+      opName = "op_" + opName;
+      if (fShapeX.empty() || fShapeW.empty() || fShapeY.empty())
+         throw std::runtime_error("SOFIE Conv Op called to GenerateInitCode without being initialized first");
+
+      size_t wTotal = ConvertShapeToLength(fShapeW);
+      std::stringstream out;
+      out << "\n//------ CONV weight vectorisation (runs once at session init)\n";
+      out << SP << "{\n";
+      out << SP << SP << "auto const elementsPerThread_wv = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << SP << "auto const elementsPerGrid_wv   = Vec::all(Idx{" << wTotal << "});\n";
+      out << SP << SP << "auto const workDiv_wv = sofie_workdiv(elementsPerGrid_wv);\n";
+      out << SP << SP << "alpaka::exec<Acc>(queue, workDiv_wv, weightVecKernel_" << opName
+         << ", alpaka::getPtrNative(deviceBuf_" << fNW << ")"
+         << ", alpaka::getPtrNative(deviceBuf_" << convK << ")"
+         << ", static_cast<Idx>(" << wTotal << "));\n";
+      out << SP << "}\n\n";
+      return out.str();
+   }
+
    std::string Generate_GPU_ALPAKA(std::string opName) override {
       opName = "op_" + opName;
       if (fShapeX.empty() || fShapeW.empty() || fShapeY.empty())
@@ -837,7 +859,6 @@ public:
       size_t gemm_k      = fShapeW[1] * kernelSize;       // input channels/group * kernel volume
       size_t gemm_m      = oDepth * oHeight * oWidth;     // output spatial size per channel
       size_t colElements = gemm_k * gemm_m;   // colRows * colCols
-      size_t wTotal      = ConvertShapeToLength(fShapeW);
 
       // For group conv: per-group output channels and _f offset
       // gemm_n stays as total output channels — we divide per group at launch
@@ -847,22 +868,8 @@ public:
       out << "\n//------ CONV_GPU_ALPAKA\n";
 
       // -----------------------------------------------------------------------
-      // Step 1: Weight vectorisation kernel — runs once, fully on GPU
-      // -----------------------------------------------------------------------
-      out << SP << "// Step 1: vectorise W -> _f on GPU (once per infer call)\n";
-      out << SP << "{\n";
-      out << SP << SP << "auto const elementsPerThread_wv = Vec::all(static_cast<Idx>(1));\n";
-      out << SP << SP << "auto const elementsPerGrid_wv   = Vec::all(Idx{" << wTotal << "});\n";
-      out << SP << SP << "auto const workDiv_wv = sofie_workdiv(elementsPerGrid_wv);\n";
-      out << SP << SP << "alpaka::exec<Acc>(queue, workDiv_wv, weightVecKernel_" << opName
-         << ", alpaka::getPtrNative(deviceBuf_" << fNW << ")"
-         << ", alpaka::getPtrNative(deviceBuf_" << convK << ")"
-         << ", static_cast<Idx>(" << wTotal << "));\n";
-      out << SP << SP << "alpaka::wait(queue);\n";
-      out << SP << "}\n\n";
-
-      // -----------------------------------------------------------------------
-      // Step 2: Batch loop
+      // Step 2: Batch loop  (Step 1 weight vectorisation now runs once at session
+      //         init, see GenerateInitCode_GPU_ALPAKA above)
       // -----------------------------------------------------------------------
       out << SP << "for (std::size_t n = 0; n < " << bsize << "; n++) {\n\n";
       out << SP << SP << "std::size_t const x_offset   = n * "

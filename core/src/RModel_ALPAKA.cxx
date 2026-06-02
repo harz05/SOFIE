@@ -698,7 +698,7 @@ void RModel::GenerateSessionCode_GPU_ALPAKA() {
 
       for (size_t id = 0; id < fOperators.size(); id++) {
          if (fSkipOperators.count(id)) continue;
-         fGC += fOperators[id]->GenerateInitCode_GPU_ALPAKA();
+         fGC += fOperators[id]->GenerateInitCode_GPU_ALPAKA(std::to_string(id));
          if (fOperators[id]->GetKind() == OperatorKind::GEMM || fOperators[id]->GetKind() == OperatorKind::CONV) {
             // GetBlasConfig() returns "" for ops that use gemmStridedBatched
             // (legacy cuBLAS path, no cuBLASLt layout registration needed).

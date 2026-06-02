@@ -86,7 +86,7 @@ public:
       return out.str();
    }
 
-   std::string GenerateInitCode_GPU_ALPAKA() override {
+   std::string GenerateInitCode_GPU_ALPAKA(std::string /*opName*/) override {
       // For initialized (weight) tensors: the device buffer for X is already populated by
       // MoveInitializedTensorsToBuffers_ALPAKA(); copy it into the Y device buffer.
       if (!fIsInputInitialized) return "";
