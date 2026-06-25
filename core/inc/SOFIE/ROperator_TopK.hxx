@@ -6,6 +6,8 @@
 #include "SOFIE/RModel.hxx"
 
 #include <sstream>
+#include <cstdlib>
+#include <cstring>
 
 
 namespace SOFIE {
@@ -188,12 +190,50 @@ public:
       return bt;
    }
 
-   // We have one block per slice. Cache the row in shared memory, bitonic-sort it
-   // best-first (indices ride along for the tie-break), then write the first K.
+   // -------- GPU algorithm selection (codegen time) --------------------------
+   // Two GPU paths share the same kernel signature and launch args:
+   //   Bitonic    : block-per-row full sort in shared memory. Portable across all
+   //                alpaka backends; the default. Bounded by the 48KB shared cap.
+   //   WarpSelect : FAISS-style warp-per-row k-selection. Exact, no shared cap, but
+   //                warp-cooperative -> CUDA/warp-32 only. Opt-in for benchmarking.
+   enum class GpuTopKAlgo { Bitonic, WarpSelect };
+
+   // thread-queue length t (FAISS picks it from K)
+   size_t WarpSelectTQ() const {
+      if (fK <= 32)  return 2;
+      if (fK <= 128) return 3;
+      if (fK <= 256) return 4;
+      return 8;
+   }
+
+   // WarpSelect is opt-in via env (it is CUDA-only, so we never pick it automatically;
+   // bitonic stays the portable default and still owns the over-cap case below).
+   GpuTopKAlgo SelectGpuAlgo() const {
+      if (const char *e = std::getenv("SOFIE_TOPK_GPU_ALGO")) {
+         if (std::strcmp(e, "warpselect") == 0) return GpuTopKAlgo::WarpSelect;
+         if (std::strcmp(e, "bitonic") == 0)    return GpuTopKAlgo::Bitonic;
+      }
+      return GpuTopKAlgo::Bitonic;
+   }
+
+   // C++ expression for the ONNX best-first comparator: value (OP) then lower index wins
+   std::string WS_better(const std::string &va, const std::string &ia,
+                         const std::string &vb, const std::string &ib) const {
+      std::string OP = fAttrLargest ? ">" : "<";
+      return "((" + va + " " + OP + " " + vb + ") || (" + va + " == " + vb +
+             " && " + ia + " < " + ib + "))";
+   }
+
    std::string Generate_GPU_Kernel_ALPAKA(std::string /*opName*/) override {
       if (fShapeX.empty())
          throw std::runtime_error("SOFIE Operator TopK called to Generate without being initialized first");
+      return (SelectGpuAlgo() == GpuTopKAlgo::WarpSelect) ? EmitWarpSelectKernel()
+                                                          : EmitBitonicKernel();
+   }
 
+   // We have one block per slice. Cache the row in shared memory, bitonic-sort it
+   // best-first (indices ride along for the tie-break), then write the first K.
+   std::string EmitBitonicKernel() {
       size_t axis = fAttrAxis < 0 ? fShapeX.size() + fAttrAxis : fAttrAxis;
       std::string NE = std::to_string(fShapeX[axis]); // real axis length
       std::string PAD = std::to_string(TopKPaddedAxis()); // next power of two >= NE
@@ -209,7 +249,7 @@ public:
       size_t valBytes = (fType == "double" || fType == "int64_t") ? 8 : 4;
       if (TopKPaddedAxis() * (valBytes + 8) > 48u * 1024u)
          throw std::runtime_error("SOFIE TopK GPU: axis length " + NE +
-            " too long for shared-memory bitonic top-K");
+            " too long for shared-memory bitonic top-K (try SOFIE_TOPK_GPU_ALGO=warpselect on CUDA)");
 
       std::string op;
       op  = "\n//------ TopK_KERNEL_ALPAKA (block-per-row bitonic)\n";
@@ -276,12 +316,176 @@ public:
       return op;
    }
 
+   // top-K of (warp queue + thread queues): load into cand, unrolled lane-stride
+   // bitonic sort (shfl_xor across lanes, register swaps within a lane), keep K best as the new
+   // warp queue, reset the buffer, refresh bar
+   std::string EmitWarpMerge(const std::string &ind) const {
+      size_t axis = fAttrAxis < 0 ? fShapeX.size() + fAttrAxis : fAttrAxis;
+      std::string NE = std::to_string(fShapeX[axis]);
+      const int W = 32;
+      size_t TQ = WarpSelectTQ();
+      size_t WQS = (fK + W - 1) / W;
+      size_t M = WQS + TQ;
+      size_t MPAD = 1; while (MPAD < M) MPAD <<= 1;
+      size_t total = static_cast<size_t>(W) * MPAD;
+      std::string SENT = fAttrLargest ? "std::numeric_limits<T>::lowest()"
+                                      : "std::numeric_limits<T>::max()";
+      std::string s;
+      for (size_t c = 0; c < WQS; ++c) {
+         std::string C = std::to_string(c);
+         s += ind + "cand[" + C + "] = wqv[" + C + "]; candI[" + C + "] = wqi[" + C + "];\n";
+      }
+      for (size_t j = 0; j < TQ; ++j) {
+         std::string slot = std::to_string(WQS + j), J = std::to_string(j);
+         s += ind + "cand[" + slot + "] = (" + J + " < tqn) ? tqv[" + J + "] : " + SENT +
+              "; candI[" + slot + "] = (" + J + " < tqn) ? tqi[" + J + "] : (int64_t)" + NE + ";\n";
+      }
+      for (size_t p = M; p < MPAD; ++p) {
+         std::string P = std::to_string(p);
+         s += ind + "cand[" + P + "] = " + SENT + "; candI[" + P + "] = (int64_t)" + NE + ";\n";
+      }
+      for (size_t kk = 2; kk <= total; kk <<= 1) {
+         for (size_t jj = kk >> 1; jj > 0; jj >>= 1) {
+            std::string KK = std::to_string(kk), WW = std::to_string(W);
+            if (jj >= static_cast<size_t>(W)) {
+               size_t sd = jj / W;// same lane,different slot
+               for (size_t slot = 0; slot < MPAD; ++slot) {
+                  size_t ps = slot ^ sd;
+                  if (ps <= slot) continue;
+                  std::string S = std::to_string(slot), P = std::to_string(ps);
+                  s += ind + "{ std::size_t g = lane + " + WW + "u*" + S + "u;\n";
+                  s += ind + "  bool ff = " + WS_better("cand[" + S + "]", "candI[" + S + "]",
+                                                        "cand[" + P + "]", "candI[" + P + "]") + ";\n";
+                  s += ind + "  bool sw = (ff != ((g & " + KK + "u) == 0u));\n";
+                  s += ind + "  T av=cand[" + S + "], bv=cand[" + P + "];"
+                             " cand[" + S + "]=sw?bv:av; cand[" + P + "]=sw?av:bv;\n";
+                  s += ind + "  int64_t ai=candI[" + S + "], bi=candI[" + P + "];"
+                             " candI[" + S + "]=sw?bi:ai; candI[" + P + "]=sw?ai:bi; }\n";
+               }
+            } else {
+               std::string JJ = std::to_string(jj);  // different lane, same slot (shfl)
+               for (size_t slot = 0; slot < MPAD; ++slot) {
+                  std::string S = std::to_string(slot);
+                  s += ind + "{ T pv = alpaka::warp::shfl_xor(acc, cand[" + S + "], " + JJ + ");\n";
+                  s += ind + "  int64_t pi = alpaka::warp::shfl_xor(acc, candI[" + S + "], " + JJ + ");\n";
+                  s += ind + "  bool low = ((lane & " + JJ + "u) == 0u);\n";
+                  s += ind + "  T lv = low ? cand[" + S + "] : pv;  int64_t li = low ? candI[" + S + "] : pi;\n";
+                  s += ind + "  T hv = low ? pv : cand[" + S + "];  int64_t hi = low ? pi : candI[" + S + "];\n";
+                  s += ind + "  std::size_t glow = (lane & ~" + JJ + "u) + " + WW + "u*" + S + "u;\n";
+                  s += ind + "  bool ff = " + WS_better("lv", "li", "hv", "hi") + ";\n";
+                  s += ind + "  bool sw = (ff != ((glow & " + KK + "u) == 0u));\n";
+                  s += ind + "  cand[" + S + "] = sw ? pv : cand[" + S + "]; candI[" + S + "] = sw ? pi : candI[" + S + "]; }\n";
+               }
+            }
+         }
+      }
+      for (size_t c = 0; c < WQS; ++c) {
+         std::string C = std::to_string(c);
+         s += ind + "wqv[" + C + "] = cand[" + C + "]; wqi[" + C + "] = candI[" + C + "];\n";
+      }
+      s += ind + "tqn = 0;\n";
+      size_t bslot = (fK - 1) / W, blane = (fK - 1) % W;
+      s += ind + "bar = alpaka::warp::shfl(acc, wqv[" + std::to_string(bslot) + "], " +
+           std::to_string(static_cast<int>(blane)) + ");\n";
+      return s;
+   }
+
+   // FAISS WarpSelect (arXiv:1702.08734) implementation: one warp per row topK
+   // register thread queue (buffer) + warp queue (running top-K); a warp-uniform ballot
+   // triggers the merge. Assumes warpSize as 32 for CUDA
+   // note- a non-warp backend would need the bitonic fallback.
+   std::string EmitWarpSelectKernel() {
+      size_t axis = fAttrAxis < 0 ? fShapeX.size() + fAttrAxis : fAttrAxis;
+      std::string NE = std::to_string(fShapeX[axis]);
+      std::string K = std::to_string(fK);
+      const int W = 32;
+      size_t TQ = WarpSelectTQ();
+      size_t WQS = (fK + W - 1) / W;
+      size_t M = WQS + TQ;
+      size_t MPAD = 1; while (MPAD < M) MPAD <<= 1;
+      std::string SENT = fAttrLargest ? "std::numeric_limits<T>::lowest()"
+                                      : "std::numeric_limits<T>::max()";
+      std::string kname = "WarpSelectKernel_" + fNVal;
+      std::string TQs = std::to_string(TQ);
+
+      std::string op;
+      op  = "\n//------ TopK_KERNEL_ALPAKA (warp-per-row WarpSelect, exact)\n";
+      op += SP + "struct " + kname + " {\n";
+      op += SP + SP + "template<typename TAcc, typename T>\n";
+      op += SP + SP + "ALPAKA_FN_ACC void operator()(\n";
+      op += SP + SP + SP + "TAcc const& acc,\n";
+      op += SP + SP + SP + "T const* __restrict__ x,\n";
+      op += SP + SP + SP + "T* __restrict__ vals,\n";
+      op += SP + SP + SP + "int64_t* __restrict__ inds,\n";
+      op += SP + SP + SP + "std::size_t const numSlices,\n";
+      op += SP + SP + SP + "std::size_t const nAfter,\n";
+      op += SP + SP + SP + "std::size_t const strideXAxis,\n";
+      op += SP + SP + SP + "std::size_t const strideXBefore,\n";
+      op += SP + SP + SP + "std::size_t const strideYAxis,\n";
+      op += SP + SP + SP + "std::size_t const strideYBefore) const {\n\n";
+
+      op += SP+SP+SP + "constexpr int WARP = " + std::to_string(W) + ";\n";
+      op += SP+SP+SP + "auto const tib  = alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0];\n";
+      op += SP+SP+SP + "auto const bid  = alpaka::getIdx<alpaka::Grid,  alpaka::Blocks>(acc)[0];\n";
+      op += SP+SP+SP + "auto const bdim = alpaka::getWorkDiv<alpaka::Block, alpaka::Threads>(acc)[0];\n";
+      op += SP+SP+SP + "std::size_t const lane  = tib % WARP;\n";
+      op += SP+SP+SP + "std::size_t const slice = (static_cast<std::size_t>(bid) * bdim + tib) / WARP;\n";
+      op += SP+SP+SP + "if (slice >= numSlices) return;\n\n";
+      op += SP+SP+SP + "std::size_t const ib = slice / nAfter;\n";
+      op += SP+SP+SP + "std::size_t const jb = slice % nAfter;\n";
+      op += SP+SP+SP + "std::size_t const xbase = ib * strideXBefore + jb;\n";
+      op += SP+SP+SP + "std::size_t const ybase = ib * strideYBefore + jb;\n\n";
+
+      op += SP+SP+SP + "T wqv[" + std::to_string(WQS) + "]; int64_t wqi[" + std::to_string(WQS) + "];\n";
+      op += SP+SP+SP + "T tqv[" + TQs + "]; int64_t tqi[" + TQs + "];\n";
+      op += SP+SP+SP + "T cand[" + std::to_string(MPAD) + "]; int64_t candI[" + std::to_string(MPAD) + "];\n";
+      for (size_t s = 0; s < WQS; ++s) {
+         std::string S = std::to_string(s);
+         op += SP+SP+SP + "wqv[" + S + "] = " + SENT + "; wqi[" + S + "] = (int64_t)" + NE + ";\n";
+      }
+      op += SP+SP+SP + "int tqn = 0;\n";
+      op += SP+SP+SP + "T bar = " + SENT + ";\n\n";
+
+      op += SP+SP+SP + "std::size_t const N = " + NE + "u;\n";
+      op += SP+SP+SP + "std::size_t const padded = ((N + WARP - 1u) / WARP) * WARP;\n";
+      op += SP+SP+SP + "for (std::size_t l = lane; l < padded; l += WARP) {\n";
+      op += SP+SP+SP+SP + "bool const ok = (l < N);\n";
+      op += SP+SP+SP+SP + "T v = ok ? x[xbase + strideXAxis * l] : " + SENT + ";\n";
+      op += SP+SP+SP+SP + "int64_t id = ok ? (int64_t)l : (int64_t)N;\n";
+      op += SP+SP+SP+SP + "bool keep = ok && " + WS_better("v","id","bar","(int64_t)N") + ";\n";
+      op += SP+SP+SP+SP + "bool needMerge = keep && (tqn == " + TQs + ");\n";
+      op += SP+SP+SP+SP + "if (alpaka::warp::ballot(acc, needMerge ? 1 : 0)) {\n";
+      op += EmitWarpMerge(SP+SP+SP+SP+SP);
+      op += SP+SP+SP+SP+SP + "keep = ok && " + WS_better("v","id","bar","(int64_t)N") + ";\n";
+      op += SP+SP+SP+SP + "}\n";
+      op += SP+SP+SP+SP + "if (keep && tqn < " + TQs + ") { tqv[tqn] = v; tqi[tqn] = id; ++tqn; }\n";
+      op += SP+SP+SP + "}\n\n";
+
+      op += SP+SP+SP + "// final flush\n";
+      op += EmitWarpMerge(SP+SP+SP);
+      op += "\n";
+
+      for (size_t s = 0; s < WQS; ++s) {
+         std::string S = std::to_string(s);
+         op += SP+SP+SP + "{ std::size_t r = lane + WARP*" + S + "u;\n";
+         op += SP+SP+SP + "  if (r < " + K + "u) { vals[ybase + strideYAxis * r] = wqv[" + S +
+               "]; inds[ybase + strideYAxis * r] = wqi[" + S + "]; } }\n";
+      }
+
+      op += SP + SP + "}\n";
+      op += SP + "};\n";
+      return op;
+   }
+
    std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string /*opName*/) override {
+      if (SelectGpuAlgo() == GpuTopKAlgo::WarpSelect)
+         return SP + "WarpSelectKernel_" + fNVal + " warpKernel_" + fNVal + ";\n";
       return SP + "TopKKernel_" + fNVal + " topKernel_" + fNVal + ";\n";
    }
 
    std::vector<std::string> GetStdLibs() override {
-      return { std::string("limits") };
+      return { std::string("limits"), std::string("cstdint"),
+               std::string("cstring"), std::string("cstdlib") };
    }
 
    // the geometry is computed here at codegen and passed as args matching the kernel signature.
@@ -301,6 +505,30 @@ public:
       size_t strideY_axis = strideY[axis];
       size_t strideX_before = (axis > 0) ? strideX[axis-1] : 0; // 0 is safe: i==0 when axis==0
       size_t strideY_before = (axis > 0) ? strideY[axis-1] : 0;
+
+      if (SelectGpuAlgo() == GpuTopKAlgo::WarpSelect) {
+         const size_t WARP = 32, wsBlock = 256;
+         std::stringstream w;
+         w << "\n//-- TopK_GPU_ALPAKA (WarpSelect, one warp per slice)\n";
+         w << SP << "alpaka::WorkDivMembers<Dim, Idx> workDiv_" << fNVal << "(\n";
+         w << SP << SP << "Vec::all(static_cast<Idx>((" << numSlices << "u * " << WARP << "u + "
+           << wsBlock << "u - 1u) / " << wsBlock << "u)),\n";
+         w << SP << SP << "Vec::all(Idx{" << wsBlock << "u}),\n";
+         w << SP << SP << "Vec::all(Idx{1u}));\n";
+         w << SP << "auto task_" << fNVal << " = alpaka::createTaskKernel<Acc>(workDiv_" << fNVal
+           << ", warpKernel_" << fNVal
+           << ", alpaka::getPtrNative(deviceBuf_" << fNX << ")"
+           << ", alpaka::getPtrNative(deviceBuf_" << fNVal << ")"
+           << ", alpaka::getPtrNative(deviceBuf_" << fNInd << ")"
+           << ", static_cast<std::size_t>(" << numSlices     << "u)"
+           << ", static_cast<std::size_t>(" << n_after       << "u)"
+           << ", static_cast<std::size_t>(" << strideX_axis  << "u)"
+           << ", static_cast<std::size_t>(" << strideX_before<< "u)"
+           << ", static_cast<std::size_t>(" << strideY_axis  << "u)"
+           << ", static_cast<std::size_t>(" << strideY_before<< "u));\n";
+         w << SP << "alpaka::enqueue(queue, task_" << fNVal << ");\n";
+         return w.str();
+      }
 
       std::stringstream out;
       out << "\n//-- TopK_GPU_ALPAKA\n";
