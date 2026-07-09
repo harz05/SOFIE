@@ -75,6 +75,8 @@
 #include "DynamicLinear_FromONNX_GPU_ALPAKA.hxx"
 #include "DynamicConv1DNoBias_FromONNX_GPU_ALPAKA.hxx"
 #include "DynamicConv2DNoBias_FromONNX_GPU_ALPAKA.hxx"
+#include "DynamicRange_FromONNX_GPU_ALPAKA.hxx"
+#include "DynamicRangeMul_FromONNX_GPU_ALPAKA.hxx"
 
 #include "GatherAxis0_FromONNX_GPU_ALPAKA.hxx"
 #include "GatherAxis1_FromONNX_GPU_ALPAKA.hxx"
@@ -520,6 +522,71 @@ TEST_F(SofieAlpakaTest, DynamicTranspose)
                     float got = res[n * P * C + p * C + c];
                     EXPECT_LE(std::abs(got - expected), TOLERANCE) << "n=" << n << " p=" << p << " c=" << c;
                 }
+    }
+}
+
+TEST_F(SofieAlpakaTest, DynamicRange)
+{
+    // X[N,K] dynamic -> Shape -> Gather(dim1=K) -> Range(0,K,1) -> Y[K] = arange(K)
+    const std::size_t Ns[] = {1, 4};
+    const std::size_t Ks[] = {3, 7};
+    for (int t = 0; t < 2; ++t) {
+        const std::size_t N = Ns[t], K = Ks[t];
+        const std::size_t sz = N * K;
+
+        auto input_h = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{sz}));
+        float* in_ptr = reinterpret_cast<float*>(alpaka::getPtrNative(input_h));
+        for (Idx i = 0; i < sz; ++i) in_ptr[i] = static_cast<float>(i);
+
+        auto input_d = alpaka::allocBuf<float, Idx>(device, Ext1D::all(Idx{sz}));
+        alpaka::memcpy(queue, input_d, input_h);
+        alpaka::wait(queue);
+
+        auto result_h = alpaka::allocBuf<int64_t, Idx>(host, Ext1D::all(Idx{K}));
+        {
+            SOFIE_DynamicRange::Session<alpaka::TagGpuCudaRt> session("", N, K);
+            auto result = session.infer(N, K, input_d);
+            cudaDeviceSynchronize();
+            alpaka::memcpy(queue, result_h, result);
+            alpaka::wait(queue);
+        }
+
+        int64_t* res = reinterpret_cast<int64_t*>(alpaka::getPtrNative(result_h));
+        for (std::size_t i = 0; i < K; ++i)
+            EXPECT_EQ(res[i], static_cast<int64_t>(i)) << "i=" << i << " N=" << N << " K=" << K;
+    }
+}
+
+TEST_F(SofieAlpakaTest, DynamicRangeMul)
+{
+    // X[N,K] dynamic -> Shape -> Gather(N),Gather(K) -> Range(0,K,1) -> Mul(arange, N) -> Y[K] = i*N
+    // N is a shape tensor read on-device by the Mul (the ParticleNet deviceBuf_168 pattern).
+    const std::size_t Ns[] = {1, 5};
+    const std::size_t Ks[] = {4, 6};
+    for (int t = 0; t < 2; ++t) {
+        const std::size_t N = Ns[t], K = Ks[t];
+        const std::size_t sz = N * K;
+
+        auto input_h = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{sz}));
+        float* in_ptr = reinterpret_cast<float*>(alpaka::getPtrNative(input_h));
+        for (Idx i = 0; i < sz; ++i) in_ptr[i] = static_cast<float>(i);
+
+        auto input_d = alpaka::allocBuf<float, Idx>(device, Ext1D::all(Idx{sz}));
+        alpaka::memcpy(queue, input_d, input_h);
+        alpaka::wait(queue);
+
+        auto result_h = alpaka::allocBuf<int64_t, Idx>(host, Ext1D::all(Idx{K}));
+        {
+            SOFIE_DynamicRangeMul::Session<alpaka::TagGpuCudaRt> session("", N, K);
+            auto result = session.infer(N, K, input_d);
+            cudaDeviceSynchronize();
+            alpaka::memcpy(queue, result_h, result);
+            alpaka::wait(queue);
+        }
+
+        int64_t* res = reinterpret_cast<int64_t*>(alpaka::getPtrNative(result_h));
+        for (std::size_t i = 0; i < K; ++i)
+            EXPECT_EQ(res[i], static_cast<int64_t>(i * N)) << "i=" << i << " N=" << N << " K=" << K;
     }
 }
 
