@@ -271,6 +271,19 @@ void RModel::GenerateGPU_ALPAKA_Buffers() {
          }
       }
    }
+
+   // shape tensors: small INT64 arrays. Host array is filled by the producing operator,
+   // device buffer is used when a shape tensor feeds a compute kernel.
+   if (!fShapeTensors.empty()) {
+      fGC += "//--- declare the shape tensors\n";
+      for (auto &i : fShapeTensors) {
+         size_t len = i.second.first.size();
+         if (len == 0) continue;
+         fGC += "int64_t tensor_" + i.first + "[" + std::to_string(len) + "];\n";
+         fGC += "BufI641D deviceBuf_" + i.first + " = alpaka::allocBuf<int64_t, Idx>(devAcc, Ext1D::all(Idx{" +
+                std::to_string(len) + "}));\n";
+      }
+   }
 }
 
 void RModel::GenerateDynamicTensorInfo_GPU_ALPAKA() {
