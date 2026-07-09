@@ -17,7 +17,11 @@
 #include <vector>
 
 void test_particle_net(int nevts = 1000, int n = 1, int n_sv = 10, int n_pf = 100) {
-   using namespace SOFIE_particle_net;   // Acc, Idx, Dim, BufF1D from the generated header
+   // Session is a template on the accelerator tag; Acc/Idx/Dim live inside it.
+   using Sess  = SOFIE_particle_net::Session<alpaka::TagGpuCudaRt>;
+   using Acc   = Sess::Acc;
+   using Idx   = Sess::Idx;
+   using Dim   = Sess::Dim;
    using Ext1D = alpaka::Vec<Dim, Idx>;
    std::cout << n_sv << ", " << n_pf << std::endl;
 
@@ -27,7 +31,9 @@ void test_particle_net(int nevts = 1000, int n = 1, int n_sv = 10, int n_pf = 10
    std::cout << "creating session..." << std::endl;
    check_mem("initial");
 
-   Session s("particle-net.dat");
+   // ctor order is (weightfile, N, n_pf, n_sv); construct at the same sizes we infer at
+   // so the dynamic buffers and cuBLASLt layouts are registered for these dims.
+   Sess s("particle-net_FromONNX_GPU_ALPAKA.dat", n, n_pf, n_sv);
 
    std::vector<float> pfp(n * 2 * n_pf), pff(n * 20 * n_pf), pfm(n * n_pf);
    std::vector<float> svp(n * 2 * n_sv), svf(n * 11 * n_sv), svm(n * n_sv);
