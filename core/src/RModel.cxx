@@ -650,6 +650,13 @@ void RModel::Initialize(const std::map<std::string, size_t> & inputParams, bool 
    std::unordered_set<std::string> runtimeInitializedInputs;
    std::vector<std::string> initFailures;   // diagnostic: collect every Initialize failure in one pass
    for(size_t op_idx = 0; op_idx < fOperators.size(); ++op_idx){
+      {
+         std::string t = "[SOFIE][order] op#" + std::to_string(op_idx) + " in:";
+         for (auto &x : fOperators[op_idx]->GetOpInputTensors()) t += " " + std::string{x};
+         t += " out:";
+         for (auto &x : fOperators[op_idx]->GetOpOutputTensors()) t += " " + std::string{x};
+         std::cerr << t << "\n";
+      }
       if (verbose) {
          auto& r = *fOperators[op_idx].get();
          std::cout << "Initializing operator " << i << "  " << typeid(r).name() << std::endl;
@@ -669,6 +676,16 @@ void RModel::Initialize(const std::map<std::string, size_t> & inputParams, bool 
       }
       for(auto &it:fOperators[op_idx]->GetOpOutputTensors()){
          std::string name = std::string{it};
+         // diagnostic: op finished Initialize without throwing but left an output unregistered
+         if (!name.empty() && !CheckIfTensorAlreadyExist(name)) {
+            std::string m = "no-register op#" + std::to_string(op_idx) + " kind="
+                          + std::to_string(static_cast<int>(fOperators[op_idx]->GetKind()))
+                          + " output " + name + " missing after Initialize (inputs:";
+            for (auto &in : fOperators[op_idx]->GetOpInputTensors()) m += " " + std::string{in};
+            m += ")";
+            std::cerr << "[SOFIE][no-register] " << m << std::endl;
+            initFailures.push_back(m);
+         }
          // check if tensor is not an initialized or output tensor and it is not already in the list
          if (fIntermediateTensorFrequencyLookup.find(it) == fIntermediateTensorFrequencyLookup.end() &&
              std::find(fOutputTensorNames.begin(), fOutputTensorNames.end(), name) == fOutputTensorNames.end() &&
