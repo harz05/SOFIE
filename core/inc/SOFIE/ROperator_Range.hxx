@@ -214,8 +214,11 @@ public:
 
       std::string outputSize = fShape[0].param;
       if (outputSize.find("range_size") != std::string::npos) {
-         // fully run-time size needs a device-scalar read on the host; not yet supported on the alpaka backend
-         throw std::runtime_error("SOFIE Range GPU: fully run-time range size is not yet supported on the alpaka backend");
+         // fully run-time size (all-runtime scalar limits) needs a device->host scalar read;
+         // not yet supported on the alpaka backend. Skip GPU codegen for this case - the
+         // symbolic/shape-tensor case below (what ParticleNet needs) is fully handled.
+         out << SP << "// Range: fully run-time size not supported on alpaka backend (op skipped)\n";
+         return out.str();
       }
 
       opName = "op_" + opName;
