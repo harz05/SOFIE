@@ -195,8 +195,7 @@ public:
    }
 
    std::string Generate_GPU_Kernel_ALPAKA(std::string OpName) override {
-      if (fBroadcast)
-         throw std::runtime_error("SOFIE BasicNary GPU: broadcasting inputs not yet supported on the alpaka backend");
+      if (fBroadcast) return "";
       OpName = "op_" + OpName;
       size_t nIn = fNInputs.size();
       std::string op;
@@ -224,13 +223,13 @@ public:
    }
 
    std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string OpName) override {
+      if (fBroadcast) return "";
       OpName = "op_" + OpName;
       return SP + "BasicNaryKernel_" + OpName + " basicNaryKernel_" + OpName + ";\n";
    }
 
    std::string Generate_GPU_ALPAKA(std::string OpName) override {
-      if (fBroadcast)
-         throw std::runtime_error("SOFIE BasicNary GPU: broadcasting inputs not yet supported on the alpaka backend");
+      if (fBroadcast) return SP + "// BasicNary broadcast not yet supported on the alpaka backend (op skipped)\n";
       if (fShapeY.empty())
          throw std::runtime_error("SOFIE BasicNary Op called to Generate without being initialized first");
       OpName = "op_" + OpName;
