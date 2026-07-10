@@ -443,6 +443,29 @@ void RModel::GenerateOutput_GPU_ALPAKA() {
       fGC += RModelProfilerGPU::GenerateBeginInferCode();
    }
 
+   // THROWAWAY NaN debug: after an op, copy its FLOAT output back to host and report if
+   // any NaN/Inf appeared. The first [NANDBG] line printed (lowest op index) is the culprit.
+   auto emitNanCheck = [&](const std::string &tname, size_t opIdx) {
+      if (GetTensorType(tname) != ETensorType::FLOAT) return;
+      std::string lenExpr;
+      if (fDynamicTensorInfos.count(tname))
+         lenExpr = ConvertDimShapeToLength(GetDimTensorShape(tname));
+      else if (fIntermediateTensorInfos.count(tname))
+         lenExpr = std::to_string(ConvertShapeToLength(GetTensorShape(tname)));
+      else
+         return; // input / initialized / shape tensor: skip
+      fGC += SP + "{ // NANDBG\n";
+      fGC += SP + SP + "alpaka::wait(queue);\n";
+      fGC += SP + SP + "std::vector<float> nandbg_h(" + lenExpr + ");\n";
+      fGC += SP + SP + "auto nandbg_v = alpaka::createView(hostAcc, nandbg_h.data(), nandbg_h.size());\n";
+      fGC += SP + SP + "alpaka::memcpy(queue, nandbg_v, deviceBuf_" + tname + ");\n";
+      fGC += SP + SP + "alpaka::wait(queue);\n";
+      fGC += SP + SP + "std::size_t nandbg_n = 0; for (float nandbg_x : nandbg_h) if (std::isnan(nandbg_x) || std::isinf(nandbg_x)) nandbg_n++;\n";
+      fGC += SP + SP + "if (nandbg_n) std::printf(\"[NANDBG] op " + std::to_string(opIdx) + " tensor_" + tname +
+             " : %zu/%zu bad\\n\", nandbg_n, nandbg_h.size());\n";
+      fGC += SP + "}\n";
+   };
+
    std::set<size_t> fusedGroupsLaunched;
    for (size_t op_idx = 0; op_idx < fOperators.size(); ++op_idx) {
       if (fVerbose)
@@ -485,6 +508,7 @@ void RModel::GenerateOutput_GPU_ALPAKA() {
                fGC += fusedCode;
             }
             fusedGroupsLaunched.insert(gIdx);
+            emitNanCheck(fEltwiseFusionGroups[gIdx].outputTensor, op_idx); // NANDBG
          }
          // Chain followers: skip — their logic is inside the fused kernel
       } else {
@@ -493,6 +517,8 @@ void RModel::GenerateOutput_GPU_ALPAKA() {
          } else {
             fGC += fOperators[op_idx]->Generate_GPU_ALPAKA(std::to_string(op_idx));
          }
+         for (auto &o : fOperators[op_idx]->GetOpOutputTensors()) // NANDBG
+            emitNanCheck(std::string(o), op_idx);
       }
    }
    // Final wait (no-op when profiling since each op already syncs)
