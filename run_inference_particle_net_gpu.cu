@@ -105,6 +105,12 @@ void test_particle_net(int nevts = 1000, int n = 1, int n_sv = 10, int n_pf = 10
    std::cout << "Total: " << std::chrono::duration<double, std::milli>(tend - tstart).count()
              << " ms for " << nevts << " events\n";
    check_mem("memory at the end");
+
+#ifdef PROFILE
+   // requires a header generated with Options::kProfile (see gen_pnet_profile.cpp)
+   s.PrintProfilingResults();
+   s.PrintMemoryInfo();
+#endif
 }
 
 int main() {
