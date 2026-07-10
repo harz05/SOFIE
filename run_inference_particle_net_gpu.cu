@@ -54,19 +54,33 @@ void test_particle_net(int nevts = 1000, int n = 1, int n_sv = 10, int n_pf = 10
    };
 
    check_mem("before looping");
+#ifdef RANDOM
    std::mt19937 rng(111);
    std::uniform_int_distribution<int> point(1, 9), mask(0, 1);
    std::normal_distribution<float> feat(0.f, 1.f);
    std::cout << "using random inputs" << std::endl;
+#else
+   std::cout << "using deterministic inputs (matches CPU driver #else fills)" << std::endl;
+#endif
 
    auto tstart = std::chrono::high_resolution_clock::now();
    for (int i = 0; i < nevts; i++) {
+#ifdef RANDOM
       std::generate(pfp.begin(), pfp.end(), [&]{ return point(rng); });
       std::generate(pff.begin(), pff.end(), [&]{ return feat(rng); });
       std::generate(pfm.begin(), pfm.end(), [&]{ return mask(rng); });
       std::generate(svp.begin(), svp.end(), [&]{ return point(rng); });
       std::generate(svf.begin(), svf.end(), [&]{ return feat(rng); });
       std::generate(svm.begin(), svm.end(), [&]{ return mask(rng); });
+#else
+      int j = std::min(i, 9);
+      std::fill(pfp.begin(), pfp.end(), int(2 + j / 2));
+      std::fill(pff.begin(), pff.end(), 0.1 * (j + 1));
+      std::fill(pfm.begin(), pfm.end(), 1);
+      std::fill(svp.begin(), svp.end(), int(3 + j / 2));
+      std::fill(svf.begin(), svf.end(), 0.2 * (j + 1));
+      std::fill(svm.begin(), svm.end(), 1);
+#endif
 
       h2d(dPfp, pfp); h2d(dPff, pff); h2d(dPfm, pfm);
       h2d(dSvp, svp); h2d(dSvf, svf); h2d(dSvm, svm);
