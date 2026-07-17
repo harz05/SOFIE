@@ -4074,6 +4074,8 @@ TEST_F(SofieAlpakaTest, TopK)
       EXPECT_LE(std::abs(val[i] - TopK_ExpectedOutput::values[i]), TOLERANCE) << "  value index=" << i;
       EXPECT_EQ(idx[i], static_cast<int64_t>(TopK_ExpectedOutput::indexes[i])) << "  index index=" << i;
    }
+}
+
 TEST_F(SofieAlpakaTest, Softmax1d)
 {
    constexpr float TOLERANCE = DEFAULT_TOLERANCE;
