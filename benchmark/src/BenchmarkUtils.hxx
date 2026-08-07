@@ -3,14 +3,47 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace sofie_bench {
+
+// SOFIE_BENCH_BATCHED_GEMM=0 builds sessions on the per-sample loop instead of the
+// batched GEMM, so the same binary can be run A/B.
+inline bool batchedGemmEnabled()
+{
+    const char *e = std::getenv("SOFIE_BENCH_BATCHED_GEMM");
+    if (!e) return true;
+    const std::string v(e);
+    return !(v == "0" || v == "false" || v == "off");
+}
+
+// The fBatchedGemm member is emitted only for models that have the flag, so it is an
+// exact test. Detecting on the constructor is not: bool converts to size_t, so a model
+// with a shape parameter would match and take the flag as its shape value.
+template <class S, class = void>
+struct HasBatchedGemm : std::false_type {};
+template <class S>
+struct HasBatchedGemm<S, std::void_t<decltype(std::declval<S &>().fBatchedGemm)>>
+    : std::true_type {};
+
+template <class S>
+S makeSession(const std::string &weightFile, bool batchedGemm)
+{
+    if constexpr (HasBatchedGemm<S>::value) {
+        return S(weightFile, batchedGemm);
+    } else {
+        (void)batchedGemm;
+        return S(weightFile);
+    }
+}
 
 struct BenchmarkConfig {
     int         warmupIter    = 10;

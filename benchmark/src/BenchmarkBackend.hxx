@@ -10,11 +10,14 @@
 #if defined(SOFIE_BACKEND_CUDA)
 #  include <cuda_runtime.h>
 #  define SOFIE_BENCH_DEVICE_SYNC() cudaDeviceSynchronize()
+#  define SOFIE_BENCH_DEVICE_MEM_INFO(freeB, totalB) cudaMemGetInfo((freeB), (totalB))
 #elif defined(SOFIE_BACKEND_HIP)
 #  include <hip/hip_runtime.h>
 #  define SOFIE_BENCH_DEVICE_SYNC() hipDeviceSynchronize()
+#  define SOFIE_BENCH_DEVICE_MEM_INFO(freeB, totalB) hipMemGetInfo((freeB), (totalB))
 #else
 #  define SOFIE_BENCH_DEVICE_SYNC() do {} while (0)
+#  define SOFIE_BENCH_DEVICE_MEM_INFO(freeB, totalB) do { *(freeB) = 0; *(totalB) = 0; } while (0)
 #endif
 
 namespace sofie_bench {

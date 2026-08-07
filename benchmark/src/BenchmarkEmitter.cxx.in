@@ -132,8 +132,10 @@ static int EmitBenchmarkModel(const std::string &onnxPath,
         << "#pragma once\n\n"
         << "#include \"" << modelName << "_GPU_ALPAKA.hxx\"\n"
         << "#include \"BenchmarkBackend.hxx\"\n"
+        << "#include \"BenchmarkUtils.hxx\"\n"
         << "#include \"GpuOccupancy.hxx\"\n"
         << "#include <chrono>\n"
+        << "#include <cstdio>\n"
         << "#include <iostream>\n"
         << "#include <random>\n"
         << "#include <string>\n\n"
@@ -183,11 +185,25 @@ static int EmitBenchmarkModel(const std::string &onnxPath,
     bench << "    alpaka::wait(queue);\n\n";
 
     bench
-        << "    // ---- Create session (loads weights) ----\n"
+        << "    // ---- Create session (loads weights), measuring the device memory it takes ----\n"
         << "    std::string weightFile = weightsDir + \"/"
         << modelName << "_GPU_ALPAKA.dat\";\n"
-        << "    SOFIE_" << cppName
-        << "::Session<AccTag> session(weightFile);\n\n";
+        << "    using SessionT = SOFIE_" << cppName << "::Session<AccTag>;\n"
+        << "    const bool benchBatchedGemm = sofie_bench::batchedGemmEnabled();\n"
+        << "    std::size_t memFreeBefore = 0, memFreeAfter = 0, memTotal = 0;\n"
+        << "    SOFIE_BENCH_DEVICE_SYNC();\n"
+        << "    SOFIE_BENCH_DEVICE_MEM_INFO(&memFreeBefore, &memTotal);\n"
+        << "    auto session = sofie_bench::makeSession<SessionT>(weightFile, benchBatchedGemm);\n"
+        << "    SOFIE_BENCH_DEVICE_SYNC();\n"
+        << "    SOFIE_BENCH_DEVICE_MEM_INFO(&memFreeAfter, &memTotal);\n"
+        << "    const double sessionDeviceMB =\n"
+        << "        (memFreeBefore > memFreeAfter)\n"
+        << "            ? static_cast<double>(memFreeBefore - memFreeAfter) / (1024.0 * 1024.0)\n"
+        << "            : 0.0;\n"
+        << "    std::printf(\"[mem] " << modelName
+        << "  batchedGemm=%d  session device = %.2f MB\\n\",\n"
+        << "                static_cast<int>(sofie_bench::HasBatchedGemm<SessionT>::value\n"
+        << "                                 && benchBatchedGemm), sessionDeviceMB);\n\n";
 
 
     bench << "    // ---- One priming inference to obtain output buffer handle(s) ----\n"
