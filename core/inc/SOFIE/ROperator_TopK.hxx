@@ -267,8 +267,15 @@ public:
          : "(v <= vSVals[topKCount-1])";
       std::string kname = "TopKKernel_" + fNVal;
 
+      /* The lanes of a warp take the lock one at a time. With every lane spinning on it
+         at once, the lane that wins can only release it if the hardware schedules the
+         lanes of a warp independently; on a lockstep wavefront the winner waits behind
+         the spinning lanes and the block never finishes. Serialising the lanes keeps
+         the lock contended only between warps, which run independently everywhere. */
       auto emitLockAcquire = [&](const std::string &ind) {
          std::string s;
+         s += ind + "for (std::int32_t lane = 0; lane < warpSize; ++lane) {\n";
+         s += ind + "if (laneId == lane) {\n";
          s += ind + "{\n";
          s += ind + SP + "unsigned int ns = 8u;\n";
          s += ind + SP + "while (alpaka::atomicCas(acc, &sLock, 0, 1, alpaka::hierarchy::Grids{}) != 0) {\n";
@@ -283,6 +290,14 @@ public:
          s += ind + SP + SP + "#endif\n";
          s += ind + SP + "}\n";
          s += ind + "}\n";
+         return s;
+      };
+
+      auto emitLockRelease = [&](const std::string &ind) {
+         std::string s;
+         s += ind + "alpaka::atomicExch(acc, &sLock, 0, alpaka::hierarchy::Grids{});\n";
+         s += ind + "}\n"; // end if (laneId == lane)
+         s += ind + "}\n"; // end for lane
          return s;
       };
 
@@ -322,6 +337,8 @@ public:
 
       op += SP + SP + SP + "auto const slice = alpaka::getIdx<alpaka::Grid, alpaka::Blocks>(acc)[0];\n";
       op += SP + SP + SP + "auto const tid = alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0];\n";
+      op += SP + SP + SP + "std::int32_t const warpSize = alpaka::warp::getSize(acc);\n";
+      op += SP + SP + SP + "std::int32_t const laneId = static_cast<std::int32_t>(tid) % warpSize;\n";
       op += SP + SP + SP + "if (slice >= numSlices) return;\n\n";
 
       op += SP + SP + SP + "std::size_t const i = slice / nAfter;\n";
@@ -360,7 +377,7 @@ public:
       op += emitInsert(SP + SP + SP + SP + SP + SP + SP);
       op += SP + SP + SP + SP + SP + SP + "}\n";
       op += SP + SP + SP + SP + SP + SP + "alpaka::mem_fence(acc, alpaka::memory_scope::Device{});\n";
-      op += SP + SP + SP + SP + SP + SP + "alpaka::atomicExch(acc, &sLock, 0, alpaka::hierarchy::Grids{});\n";
+      op += emitLockRelease(SP + SP + SP + SP + SP + SP);
       op += SP + SP + SP + SP + SP + SP + "rsN = 0;\n";
       op += SP + SP + SP + SP + SP + "}\n";
       op += SP + SP + SP + SP + "}\n";
@@ -376,7 +393,7 @@ public:
       op += emitInsert(SP + SP + SP + SP + SP + SP);
       op += SP + SP + SP + SP + "}\n";
       op += SP + SP + SP + SP + "alpaka::mem_fence(acc, alpaka::memory_scope::Device{});\n";
-      op += SP + SP + SP + SP + "alpaka::atomicExch(acc, &sLock, 0, alpaka::hierarchy::Grids{});\n";
+      op += emitLockRelease(SP + SP + SP + SP);
       op += SP + SP + SP + "}\n\n";
 
       op += SP + SP + SP + "alpaka::syncBlockThreads(acc);\n\n";
